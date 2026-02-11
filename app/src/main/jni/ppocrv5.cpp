@@ -559,3 +559,26 @@ int PPOCRv5::draw(cv::Mat& rgb, const std::vector<Object>& objects)
 
     return 0;
 }
+
+std::string PPOCRv5::get_recognized_text(const std::vector<Object>& objects)
+{
+    std::string result;
+    for (size_t i = 0; i < objects.size(); i++)
+    {
+        const Object& obj = objects[i];
+        for (size_t j = 0; j < obj.text.size(); j++)
+        {
+            const Character& ch = obj.text[j];
+            if (ch.id >= 0 && ch.id < character_dict_size)
+            {
+                result += character_dict[ch.id];
+            }
+            else if (!result.empty() && result.back() != ' ')
+            {
+                result += " ";
+            }
+        }
+        result += "\n";
+    }
+    return result;
+}

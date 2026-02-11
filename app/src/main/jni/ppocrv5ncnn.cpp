@@ -15,6 +15,7 @@
 #include <android/asset_manager_jni.h>
 #include <android/native_window_jni.h>
 #include <android/native_window.h>
+#include <android/bitmap.h>
 
 #include <android/log.h>
 
@@ -27,6 +28,7 @@
 #include <benchmark.h>
 
 #include "ppocrv5.h"
+#include "ppocrv5_dict.h"
 
 #include "ndkcamera.h"
 
@@ -281,6 +283,141 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_ppocrv5ncnn_PPOCRv5Ncnn_setOutputWin
     g_camera->set_window(win);
 
     return JNI_TRUE;
+}
+
+// public native String recognizeImage(Bitmap bitmap);
+JNIEXPORT jstring JNICALL Java_com_tencent_ppocrv5ncnn_PPOCRv5Ncnn_recognizeImage(JNIEnv* env, jobject thiz, jobject bitmap)
+{
+    AndroidBitmapInfo info;
+    if (AndroidBitmap_getInfo(env, bitmap, &info) < 0)
+    {
+        return env->NewStringUTF("");
+    }
+
+    if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888)
+    {
+        return env->NewStringUTF("");
+    }
+
+    void* pixels = 0;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0)
+    {
+        return env->NewStringUTF("");
+    }
+
+    // Convert RGBA to RGB cv::Mat
+    cv::Mat rgba(info.height, info.width, CV_8UC4, pixels);
+    cv::Mat rgb;
+    cv::cvtColor(rgba, rgb, cv::COLOR_RGBA2RGB);
+
+    AndroidBitmap_unlockPixels(env, bitmap);
+
+    std::string result_text;
+    {
+        ncnn::MutexLockGuard g(lock);
+
+        if (g_ppocrv5)
+        {
+            std::vector<Object> objects;
+            g_ppocrv5->detect_and_recognize(rgb, objects);
+            result_text = g_ppocrv5->get_recognized_text(objects);
+        }
+    }
+
+    return env->NewStringUTF(result_text.c_str());
+}
+
+// public native String recognizeImageWithBoxes(Bitmap bitmap);
+// Returns JSON array with text and bounding box coordinates
+JNIEXPORT jstring JNICALL Java_com_tencent_ppocrv5ncnn_PPOCRv5Ncnn_recognizeImageWithBoxes(JNIEnv* env, jobject thiz, jobject bitmap)
+{
+    AndroidBitmapInfo info;
+    if (AndroidBitmap_getInfo(env, bitmap, &info) < 0)
+    {
+        return env->NewStringUTF("[]");
+    }
+
+    if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888)
+    {
+        return env->NewStringUTF("[]");
+    }
+
+    void* pixels = 0;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0)
+    {
+        return env->NewStringUTF("[]");
+    }
+
+    // Convert RGBA to RGB cv::Mat
+    cv::Mat rgba(info.height, info.width, CV_8UC4, pixels);
+    cv::Mat rgb;
+    cv::cvtColor(rgba, rgb, cv::COLOR_RGBA2RGB);
+
+    AndroidBitmap_unlockPixels(env, bitmap);
+
+    std::string result_json = "[";
+    {
+        ncnn::MutexLockGuard g(lock);
+
+        if (g_ppocrv5)
+        {
+            std::vector<Object> objects;
+            g_ppocrv5->detect_and_recognize(rgb, objects);
+
+            for (size_t i = 0; i < objects.size(); i++)
+            {
+                const Object& obj = objects[i];
+
+                // Get text
+                std::string text;
+                for (size_t j = 0; j < obj.text.size(); j++)
+                {
+                    const Character& ch = obj.text[j];
+                    if (ch.id >= 0 && ch.id < character_dict_size)
+                    {
+                        text += character_dict[ch.id];
+                    }
+                }
+
+                // Get bounding box corners
+                cv::Point2f corners[4];
+                obj.rrect.points(corners);
+
+                // Calculate min/max for axis-aligned bounding box
+                float min_x = corners[0].x, max_x = corners[0].x;
+                float min_y = corners[0].y, max_y = corners[0].y;
+                for (int k = 1; k < 4; k++)
+                {
+                    if (corners[k].x < min_x) min_x = corners[k].x;
+                    if (corners[k].x > max_x) max_x = corners[k].x;
+                    if (corners[k].y < min_y) min_y = corners[k].y;
+                    if (corners[k].y > max_y) max_y = corners[k].y;
+                }
+
+                // Escape quotes in text for JSON
+                std::string escaped_text;
+                for (size_t j = 0; j < text.size(); j++)
+                {
+                    if (text[j] == '"') escaped_text += "\\\"";
+                    else if (text[j] == '\\') escaped_text += "\\\\";
+                    else if (text[j] == '\n') escaped_text += "\\n";
+                    else escaped_text += text[j];
+                }
+
+                if (i > 0) result_json += ",";
+                char buf[512];
+                snprintf(buf, sizeof(buf),
+                    "{\"text\":\"%s\",\"x\":%.1f,\"y\":%.1f,\"w\":%.1f,\"h\":%.1f,\"cx\":%.1f,\"cy\":%.1f}",
+                    escaped_text.c_str(),
+                    min_x, min_y, max_x - min_x, max_y - min_y,
+                    obj.rrect.center.x, obj.rrect.center.y);
+                result_json += buf;
+            }
+        }
+    }
+    result_json += "]";
+
+    return env->NewStringUTF(result_json.c_str());
 }
 
 }

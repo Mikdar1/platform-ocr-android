@@ -15,6 +15,7 @@
 package com.tencent.ppocrv5ncnn;
 
 import android.content.res.AssetManager;
+import android.graphics.Bitmap;
 import android.view.Surface;
 
 public class PPOCRv5Ncnn
@@ -23,6 +24,8 @@ public class PPOCRv5Ncnn
     public native boolean openCamera(int facing);
     public native boolean closeCamera();
     public native boolean setOutputWindow(Surface surface);
+    public native String recognizeImage(Bitmap bitmap);
+    public native String recognizeImageWithBoxes(Bitmap bitmap);
 
     static {
         System.loadLibrary("ppocrv5ncnn");

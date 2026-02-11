@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace 'com.tencent.ppocrv5ncnn'
-    compileSdk 33
+    compileSdk 34
     ndkVersion "29.0.14206865"
 
     defaultConfig {
@@ -23,13 +23,8 @@ android {
 
     externalNativeBuild {
         cmake {
-            version "3.31.5"
             path file('src/main/jni/CMakeLists.txt')
         }
-    }
-
-    dependencies {
-        implementation 'com.android.support:support-v4:24.0.0'
     }
 
     packaging {
@@ -37,4 +32,9 @@ android {
             useLegacyPackaging true
         }
     }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.12.0'
+    implementation 'com.google.mediapipe:tasks-genai:0.10.24'
 }

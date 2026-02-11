@@ -50,6 +50,7 @@ public:
 
     int detect_and_recognize(const cv::Mat& rgb, std::vector<Object>& objects);
     int draw(cv::Mat& rgb, const std::vector<Object>& objects);
+    std::string get_recognized_text(const std::vector<Object>& objects);
 
 protected:
     ncnn::Net ppocrv5_det;

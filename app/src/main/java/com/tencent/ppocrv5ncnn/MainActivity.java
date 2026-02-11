@@ -14,169 +14,510 @@
 
 package com.tencent.ppocrv5ncnn;
 
-import android.Manifest;
 import android.app.Activity;
-import android.content.pm.PackageManager;
-import android.graphics.PixelFormat;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
-import android.view.Surface;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
 import android.view.View;
-import android.view.WindowManager;
-import android.widget.AdapterView;
 import android.widget.Button;
-import android.widget.Spinner;
+import android.widget.ProgressBar;
+import android.widget.RadioGroup;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
 
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.ContextCompat;
+import java.io.InputStream;
+import java.util.Locale;
 
-public class MainActivity extends Activity implements SurfaceHolder.Callback
+public class MainActivity extends Activity
 {
-    public static final int REQUEST_CAMERA = 100;
+    private static final String TAG = "MainActivity";
+    private static final int REQUEST_IMAGE_PICK = 1;
 
     private PPOCRv5Ncnn ppocrv5ncnn = new PPOCRv5Ncnn();
-    private int facing = 0;
+    private LlmHelper llmHelper = new LlmHelper();
+    private ModelDownloader modelDownloader;
 
-    private Spinner spinnerModel;
-    private Spinner spinnerSize;
-    private Spinner spinnerCPUGPU;
-    private int current_model = 0;
-    private int current_size = 0;
-    private int current_cpugpu = 0;
+    private OcrOverlayView imageView;
+    private TextView textOcrTimer;
+    private TextView textLlmTimer;
+    private TextView textLlmStatus;
+    private TextView textDownloadProgress;
+    private ProgressBar progressDownload;
+    private RadioGroup radioGroupModel;
+    private Button buttonRunOCR;
+    private Button buttonRunLLM;
+    private Button buttonDownloadLLM;
 
-    private SurfaceView cameraView;
+    // Two-column results
+    private TextView textRuleResult;
+    private TextView textRuleTimer;
+    private TextView textLlmResult;
+    private TextView textLlmResultTimer;
 
-    /** Called when the activity is first created. */
+    // OCR raw text toggle
+    private Button buttonToggleOcr;
+    private ScrollView scrollOcrRaw;
+    private TextView textOcrRaw;
+    private boolean ocrRawVisible = false;
+
+    private Bitmap currentBitmap;
+    private String currentOcrResult;
+    private int currentModel = 0; // 0 = mobile, 1 = server
+
+    private Handler timerHandler = new Handler(Looper.getMainLooper());
+    private long ocrStartTime;
+    private long llmStartTime;
+    private boolean isOcrRunning = false;
+    private boolean isLlmRunning = false;
+    private boolean isDownloading = false;
+
+    private Runnable ocrTimerRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (isOcrRunning) {
+                long elapsedMillis = System.currentTimeMillis() - ocrStartTime;
+                updateTimerDisplay(textOcrTimer, "OCR", elapsedMillis);
+                timerHandler.postDelayed(this, 10);
+            }
+        }
+    };
+
+    private Runnable llmTimerRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (isLlmRunning) {
+                long elapsedMillis = System.currentTimeMillis() - llmStartTime;
+                updateTimerDisplay(textLlmResultTimer, "LLM", elapsedMillis);
+                timerHandler.postDelayed(this, 10);
+            }
+        }
+    };
+
     @Override
     public void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        modelDownloader = new ModelDownloader(this);
 
-        cameraView = (SurfaceView) findViewById(R.id.cameraview);
+        imageView = (OcrOverlayView) findViewById(R.id.imageView);
+        textOcrTimer = (TextView) findViewById(R.id.textOcrTimer);
+        textLlmTimer = (TextView) findViewById(R.id.textLlmTimer);
+        textLlmStatus = (TextView) findViewById(R.id.textLlmStatus);
+        textDownloadProgress = (TextView) findViewById(R.id.textDownloadProgress);
+        progressDownload = (ProgressBar) findViewById(R.id.progressDownload);
+        radioGroupModel = (RadioGroup) findViewById(R.id.radioGroupModel);
+        buttonRunOCR = (Button) findViewById(R.id.buttonRunOCR);
+        buttonRunLLM = (Button) findViewById(R.id.buttonRunLLM);
+        buttonDownloadLLM = (Button) findViewById(R.id.buttonDownloadLLM);
 
-        cameraView.getHolder().setFormat(PixelFormat.RGBA_8888);
-        cameraView.getHolder().addCallback(this);
+        // Two-column result views
+        textRuleResult = (TextView) findViewById(R.id.textRuleResult);
+        textRuleTimer = (TextView) findViewById(R.id.textRuleTimer);
+        textLlmResult = (TextView) findViewById(R.id.textLlmResult);
+        textLlmResultTimer = (TextView) findViewById(R.id.textLlmResultTimer);
 
-        Button buttonSwitchCamera = (Button) findViewById(R.id.buttonSwitchCamera);
-        buttonSwitchCamera.setOnClickListener(new View.OnClickListener() {
+        // OCR raw text toggle
+        buttonToggleOcr = (Button) findViewById(R.id.buttonToggleOcr);
+        scrollOcrRaw = (ScrollView) findViewById(R.id.scrollOcrRaw);
+        textOcrRaw = (TextView) findViewById(R.id.textOcrRaw);
+
+        Button buttonSelectImage = (Button) findViewById(R.id.buttonSelectImage);
+        buttonSelectImage.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View arg0) {
-
-                int new_facing = 1 - facing;
-
-                ppocrv5ncnn.closeCamera();
-
-                ppocrv5ncnn.openCamera(new_facing);
-
-                facing = new_facing;
+            public void onClick(View v) {
+                Intent intent = new Intent(Intent.ACTION_PICK);
+                intent.setType("image/*");
+                startActivityForResult(intent, REQUEST_IMAGE_PICK);
             }
         });
 
-        spinnerModel = (Spinner) findViewById(R.id.spinnerModel);
-        spinnerModel.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        buttonRunOCR.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onItemSelected(AdapterView<?> arg0, View arg1, int position, long id)
-            {
-                if (position != current_model)
-                {
-                    current_model = position;
-                    reload();
+            public void onClick(View v) {
+                runOCRWithTimer();
+            }
+        });
+
+        buttonRunLLM.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                runLLMWithTimer();
+            }
+        });
+
+        buttonDownloadLLM.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startModelDownload();
+            }
+        });
+
+        buttonToggleOcr.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                ocrRawVisible = !ocrRawVisible;
+                if (ocrRawVisible) {
+                    scrollOcrRaw.setVisibility(View.VISIBLE);
+                    buttonToggleOcr.setText("Hide OCR Text \u25B2");
+                } else {
+                    scrollOcrRaw.setVisibility(View.GONE);
+                    buttonToggleOcr.setText("Show OCR Text \u25BC");
                 }
             }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> arg0)
-            {
-            }
         });
 
-        spinnerSize = (Spinner) findViewById(R.id.spinnerSize);
-        spinnerSize.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        radioGroupModel.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
             @Override
-            public void onItemSelected(AdapterView<?> arg0, View arg1, int position, long id)
-            {
-                if (position != current_size)
-                {
-                    current_size = position;
-                    reload();
+            public void onCheckedChanged(RadioGroup group, int checkedId) {
+                int newModel = (checkedId == R.id.radioMobile) ? 0 : 1;
+                if (newModel != currentModel) {
+                    currentModel = newModel;
+                    loadOcrModel();
+                    clearResults();
                 }
             }
-
-            @Override
-            public void onNothingSelected(AdapterView<?> arg0)
-            {
-            }
         });
 
-        spinnerCPUGPU = (Spinner) findViewById(R.id.spinnerCPUGPU);
-        spinnerCPUGPU.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> arg0, View arg1, int position, long id)
-            {
-                if (position != current_cpugpu)
-                {
-                    current_cpugpu = position;
-                    reload();
-                }
-            }
+        // Load OCR model
+        loadOcrModel();
 
-            @Override
-            public void onNothingSelected(AdapterView<?> arg0)
-            {
-            }
-        });
-
-        reload();
+        // Check if LLM model exists and initialize
+        checkAndInitializeLLM();
     }
 
-    private void reload()
+    private void clearResults() {
+        textRuleResult.setText("");
+        textRuleTimer.setText("");
+        textLlmResult.setText("");
+        textLlmResultTimer.setText("");
+        textOcrRaw.setText("");
+        textOcrTimer.setText("");
+        textLlmTimer.setText("");
+        currentOcrResult = null;
+        buttonRunLLM.setEnabled(false);
+        imageView.clearResults();
+    }
+
+    private void checkAndInitializeLLM() {
+        textLlmStatus.setText("LLM: Checking...");
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final boolean modelExists = modelDownloader.isModelDownloaded();
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (modelExists) {
+                            initializeLLM();
+                        } else {
+                            textLlmStatus.setText("LLM: Model not found (~1.5GB download required)");
+                            buttonDownloadLLM.setVisibility(View.VISIBLE);
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void startModelDownload() {
+        if (isDownloading) {
+            modelDownloader.cancel();
+            return;
+        }
+
+        isDownloading = true;
+        buttonDownloadLLM.setText("Cancel");
+        progressDownload.setVisibility(View.VISIBLE);
+        progressDownload.setProgress(0);
+        textDownloadProgress.setVisibility(View.VISIBLE);
+        textLlmStatus.setText("LLM: Downloading...");
+
+        modelDownloader.downloadModel(new ModelDownloader.DownloadCallback() {
+            @Override
+            public void onProgress(final int percent, final long downloadedBytes, final long totalBytes) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        progressDownload.setProgress(percent);
+                        textDownloadProgress.setText(String.format(Locale.US, "%s / %s (%d%%)",
+                            ModelDownloader.formatBytes(downloadedBytes),
+                            ModelDownloader.formatBytes(totalBytes),
+                            percent));
+                    }
+                });
+            }
+
+            @Override
+            public void onSuccess(final String modelPath) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        isDownloading = false;
+                        progressDownload.setVisibility(View.GONE);
+                        textDownloadProgress.setVisibility(View.GONE);
+                        buttonDownloadLLM.setVisibility(View.GONE);
+                        textLlmStatus.setText("LLM: Download complete, loading...");
+                        initializeLLM();
+                    }
+                });
+            }
+
+            @Override
+            public void onError(final String error) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        isDownloading = false;
+                        progressDownload.setVisibility(View.GONE);
+                        textDownloadProgress.setVisibility(View.GONE);
+                        buttonDownloadLLM.setText("Download Model");
+                        buttonDownloadLLM.setVisibility(View.VISIBLE);
+                        textLlmStatus.setText("LLM: " + error);
+                        Toast.makeText(MainActivity.this, error, Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
+    }
+
+    private void initializeLLM() {
+        textLlmStatus.setText("LLM: Loading model...");
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String modelPath = modelDownloader.getModelPath();
+                final boolean success = llmHelper.initialize(MainActivity.this, modelPath);
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (success) {
+                            textLlmStatus.setText("LLM: Ready (Qwen 2.5 1.5B)");
+                            buttonDownloadLLM.setVisibility(View.GONE);
+                            // Enable LLM button if we have OCR results
+                            if (currentOcrResult != null && !currentOcrResult.isEmpty()) {
+                                buttonRunLLM.setEnabled(true);
+                            }
+                        } else {
+                            textLlmStatus.setText("LLM: Failed to load model");
+                            buttonDownloadLLM.setVisibility(View.VISIBLE);
+                            buttonDownloadLLM.setText("Retry");
+                        }
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void loadOcrModel()
     {
-        boolean ret_init = ppocrv5ncnn.loadModel(getAssets(), current_model, current_size, current_cpugpu);
-        if (!ret_init)
+        boolean ret = ppocrv5ncnn.loadModel(getAssets(), currentModel, 2, 0);
+        if (!ret)
         {
-            Log.e("MainActivity", "ppocrv5ncnn loadModel failed");
+            Log.e(TAG, "ppocrv5ncnn loadModel failed");
+        }
+    }
+
+    private void updateTimerDisplay(TextView timerView, String prefix, long millis)
+    {
+        long seconds = millis / 1000;
+        long ms = millis % 1000;
+        timerView.setText(String.format(Locale.US, "%s: %d.%03ds", prefix, seconds, ms));
+    }
+
+    private void runOCRWithTimer()
+    {
+        if (currentBitmap == null) return;
+
+        buttonRunOCR.setEnabled(false);
+        buttonRunLLM.setEnabled(false);
+        textRuleResult.setText("Running OCR...");
+        textLlmResult.setText("");
+        textRuleTimer.setText("");
+        textLlmResultTimer.setText("");
+        textOcrRaw.setText("");
+
+        ocrStartTime = System.currentTimeMillis();
+        isOcrRunning = true;
+        timerHandler.post(ocrTimerRunnable);
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                // Get OCR result with bounding boxes for spatial extraction
+                final String resultWithBoxes = ppocrv5ncnn.recognizeImageWithBoxes(currentBitmap);
+                // Also get plain text for LLM
+                final String result = ppocrv5ncnn.recognizeImage(currentBitmap);
+                final long ocrEndTime = System.currentTimeMillis();
+
+                // Run spatial rule-based extraction using bounding box coordinates
+                final long ruleStartTime = System.currentTimeMillis();
+                final String ruleResult = SpatialExtractor.extract(resultWithBoxes);
+                final long ruleEndTime = System.currentTimeMillis();
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        isOcrRunning = false;
+                        timerHandler.removeCallbacks(ocrTimerRunnable);
+
+                        long ocrElapsed = ocrEndTime - ocrStartTime;
+                        long ruleElapsed = ruleEndTime - ruleStartTime;
+                        updateTimerDisplay(textOcrTimer, "OCR", ocrElapsed);
+                        updateTimerDisplay(textRuleTimer, "Rule", ruleElapsed);
+
+                        if (result != null && !result.isEmpty())
+                        {
+                            textOcrRaw.setText(result);
+                            textRuleResult.setText(ruleResult);
+                            currentOcrResult = result;
+                            // Show bounding boxes on the image
+                            imageView.setOcrResults(resultWithBoxes,
+                                currentBitmap.getWidth(), currentBitmap.getHeight());
+                            // Enable LLM button if LLM is ready
+                            buttonRunLLM.setEnabled(llmHelper.isInitialized());
+                        }
+                        else
+                        {
+                            textOcrRaw.setText("No text recognized");
+                            textRuleResult.setText("No text to extract");
+                            currentOcrResult = null;
+                            imageView.clearResults();
+                            buttonRunLLM.setEnabled(false);
+                        }
+
+                        buttonRunOCR.setEnabled(true);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void runLLMWithTimer()
+    {
+        if (currentOcrResult == null || currentOcrResult.isEmpty()) {
+            Toast.makeText(this, "No OCR result to process", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (!llmHelper.isInitialized()) {
+            Toast.makeText(this, "LLM not initialized", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        buttonRunOCR.setEnabled(false);
+        buttonRunLLM.setEnabled(false);
+        textLlmResult.setText("Structuring with LLM...");
+
+        llmStartTime = System.currentTimeMillis();
+        isLlmRunning = true;
+        timerHandler.post(llmTimerRunnable);
+
+        llmHelper.structureKartuKeluargaAsync(currentOcrResult, new LlmHelper.LlmCallback() {
+            @Override
+            public void onResult(final String result) {
+                final long endTime = System.currentTimeMillis();
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        isLlmRunning = false;
+                        timerHandler.removeCallbacks(llmTimerRunnable);
+
+                        long elapsed = endTime - llmStartTime;
+                        updateTimerDisplay(textLlmResultTimer, "LLM", elapsed);
+                        updateTimerDisplay(textLlmTimer, "LLM", elapsed);
+
+                        textLlmResult.setText(result);
+                        buttonRunOCR.setEnabled(true);
+                        buttonRunLLM.setEnabled(true);
+                    }
+                });
+            }
+
+            @Override
+            public void onError(final String error) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        isLlmRunning = false;
+                        timerHandler.removeCallbacks(llmTimerRunnable);
+
+                        textLlmResultTimer.setText("LLM: Error");
+                        textLlmResult.setText("Error: " + error);
+                        buttonRunOCR.setEnabled(true);
+                        buttonRunLLM.setEnabled(true);
+                    }
+                });
+            }
+
+            @Override
+            public void onPartialResult(String partialResult) {
+                // Not used for now
+            }
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data)
+    {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == REQUEST_IMAGE_PICK && resultCode == RESULT_OK && data != null)
+        {
+            Uri imageUri = data.getData();
+            if (imageUri != null)
+            {
+                try
+                {
+                    InputStream inputStream = getContentResolver().openInputStream(imageUri);
+                    currentBitmap = BitmapFactory.decodeStream(inputStream);
+                    inputStream.close();
+
+                    if (currentBitmap != null)
+                    {
+                        if (currentBitmap.getConfig() != Bitmap.Config.ARGB_8888)
+                        {
+                            currentBitmap = currentBitmap.copy(Bitmap.Config.ARGB_8888, false);
+                        }
+
+                        imageView.setImageBitmap(currentBitmap);
+                        buttonRunOCR.setEnabled(true);
+                        buttonRunLLM.setEnabled(false);
+                        clearResults();
+                    }
+                }
+                catch (Exception e)
+                {
+                    Log.e(TAG, "Error loading image", e);
+                    textRuleResult.setText("Error loading image");
+                }
+            }
         }
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height)
+    protected void onDestroy()
     {
-        ppocrv5ncnn.setOutputWindow(holder.getSurface());
-    }
-
-    @Override
-    public void surfaceCreated(SurfaceHolder holder)
-    {
-    }
-
-    @Override
-    public void surfaceDestroyed(SurfaceHolder holder)
-    {
-    }
-
-    @Override
-    public void onResume()
-    {
-        super.onResume();
-
-        if (ContextCompat.checkSelfPermission(getApplicationContext(), Manifest.permission.CAMERA) == PackageManager.PERMISSION_DENIED)
-        {
-            ActivityCompat.requestPermissions(this, new String[] {Manifest.permission.CAMERA}, REQUEST_CAMERA);
+        super.onDestroy();
+        isOcrRunning = false;
+        isLlmRunning = false;
+        timerHandler.removeCallbacks(ocrTimerRunnable);
+        timerHandler.removeCallbacks(llmTimerRunnable);
+        if (modelDownloader != null) {
+            modelDownloader.cancel();
         }
-
-        ppocrv5ncnn.openCamera(facing);
-    }
-
-    @Override
-    public void onPause()
-    {
-        super.onPause();
-
-        ppocrv5ncnn.closeCamera();
+        llmHelper.close();
     }
 }
