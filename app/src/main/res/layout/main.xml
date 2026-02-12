@@ -48,6 +48,14 @@
 
         </RadioGroup>
 
+        <CheckBox
+            android:id="@+id/checkBoxGpu"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="GPU"
+            android:textSize="12sp"
+            android:layout_marginStart="8dp" />
+
     </LinearLayout>
 
     <!-- Image preview with OCR overlay -->
@@ -74,15 +82,31 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Run OCR"
-            android:textSize="11sp"
+            android:textSize="10sp"
             android:enabled="false" />
 
         <TextView
             android:id="@+id/textOcrTimer"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="2dp"
+            android:textSize="10sp" />
+
+        <Button
+            android:id="@+id/buttonRunStructuring"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Structuring"
+            android:textSize="10sp"
             android:layout_marginStart="4dp"
-            android:textSize="11sp" />
+            android:enabled="false" />
+
+        <TextView
+            android:id="@+id/textStructuringTimer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="2dp"
+            android:textSize="10sp" />
 
         <View
             android:layout_width="0dp"
@@ -94,15 +118,15 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Run LLM"
-            android:textSize="11sp"
+            android:textSize="10sp"
             android:enabled="false" />
 
         <TextView
             android:id="@+id/textLlmTimer"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:textSize="11sp" />
+            android:layout_marginStart="2dp"
+            android:textSize="10sp" />
 
     </LinearLayout>
 

@@ -29,6 +29,8 @@ import android.widget.ProgressBar;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
 import android.widget.Toast;
 
 import java.io.InputStream;
@@ -51,8 +53,10 @@ public class MainActivity extends Activity
     private ProgressBar progressDownload;
     private RadioGroup radioGroupModel;
     private Button buttonRunOCR;
+    private Button buttonRunStructuring;
     private Button buttonRunLLM;
     private Button buttonDownloadLLM;
+    private TextView textStructuringTimer;
 
     // Two-column results
     private TextView textRuleResult;
@@ -66,9 +70,13 @@ public class MainActivity extends Activity
     private TextView textOcrRaw;
     private boolean ocrRawVisible = false;
 
+    private CheckBox checkBoxGpu;
+
     private Bitmap currentBitmap;
     private String currentOcrResult;
+    private String currentOcrResultWithBoxes;
     private int currentModel = 0; // 0 = mobile, 1 = server
+    private int currentCpuGpu = 0; // 0 = CPU, 1 = GPU (Vulkan)
 
     private Handler timerHandler = new Handler(Looper.getMainLooper());
     private long ocrStartTime;
@@ -114,7 +122,10 @@ public class MainActivity extends Activity
         textDownloadProgress = (TextView) findViewById(R.id.textDownloadProgress);
         progressDownload = (ProgressBar) findViewById(R.id.progressDownload);
         radioGroupModel = (RadioGroup) findViewById(R.id.radioGroupModel);
+        checkBoxGpu = (CheckBox) findViewById(R.id.checkBoxGpu);
         buttonRunOCR = (Button) findViewById(R.id.buttonRunOCR);
+        buttonRunStructuring = (Button) findViewById(R.id.buttonRunStructuring);
+        textStructuringTimer = (TextView) findViewById(R.id.textStructuringTimer);
         buttonRunLLM = (Button) findViewById(R.id.buttonRunLLM);
         buttonDownloadLLM = (Button) findViewById(R.id.buttonDownloadLLM);
 
@@ -143,6 +154,13 @@ public class MainActivity extends Activity
             @Override
             public void onClick(View v) {
                 runOCRWithTimer();
+            }
+        });
+
+        buttonRunStructuring.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                runStructuringWithTimer();
             }
         });
 
@@ -186,6 +204,20 @@ public class MainActivity extends Activity
             }
         });
 
+        checkBoxGpu.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                int newCpuGpu = isChecked ? 1 : 0;
+                if (newCpuGpu != currentCpuGpu) {
+                    currentCpuGpu = newCpuGpu;
+                    loadOcrModel();
+                    Toast.makeText(MainActivity.this,
+                        isChecked ? "Using GPU (Vulkan)" : "Using CPU",
+                        Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+
         // Load OCR model
         loadOcrModel();
 
@@ -196,12 +228,15 @@ public class MainActivity extends Activity
     private void clearResults() {
         textRuleResult.setText("");
         textRuleTimer.setText("");
+        textStructuringTimer.setText("");
         textLlmResult.setText("");
         textLlmResultTimer.setText("");
         textOcrRaw.setText("");
         textOcrTimer.setText("");
         textLlmTimer.setText("");
         currentOcrResult = null;
+        currentOcrResultWithBoxes = null;
+        buttonRunStructuring.setEnabled(false);
         buttonRunLLM.setEnabled(false);
         imageView.clearResults();
     }
@@ -322,7 +357,7 @@ public class MainActivity extends Activity
 
     private void loadOcrModel()
     {
-        boolean ret = ppocrv5ncnn.loadModel(getAssets(), currentModel, 2, 0);
+        boolean ret = ppocrv5ncnn.loadModel(getAssets(), currentModel, 2, currentCpuGpu);
         if (!ret)
         {
             Log.e(TAG, "ppocrv5ncnn loadModel failed");
@@ -341,12 +376,14 @@ public class MainActivity extends Activity
         if (currentBitmap == null) return;
 
         buttonRunOCR.setEnabled(false);
+        buttonRunStructuring.setEnabled(false);
         buttonRunLLM.setEnabled(false);
-        textRuleResult.setText("Running OCR...");
+        textOcrRaw.setText("Running OCR...");
+        textRuleResult.setText("");
         textLlmResult.setText("");
         textRuleTimer.setText("");
+        textStructuringTimer.setText("");
         textLlmResultTimer.setText("");
-        textOcrRaw.setText("");
 
         ocrStartTime = System.currentTimeMillis();
         isOcrRunning = true;
@@ -361,11 +398,6 @@ public class MainActivity extends Activity
                 final String result = ppocrv5ncnn.recognizeImage(currentBitmap);
                 final long ocrEndTime = System.currentTimeMillis();
 
-                // Run spatial rule-based extraction using bounding box coordinates
-                final long ruleStartTime = System.currentTimeMillis();
-                final String ruleResult = SpatialExtractor.extract(resultWithBoxes);
-                final long ruleEndTime = System.currentTimeMillis();
-
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -373,31 +405,63 @@ public class MainActivity extends Activity
                         timerHandler.removeCallbacks(ocrTimerRunnable);
 
                         long ocrElapsed = ocrEndTime - ocrStartTime;
-                        long ruleElapsed = ruleEndTime - ruleStartTime;
                         updateTimerDisplay(textOcrTimer, "OCR", ocrElapsed);
-                        updateTimerDisplay(textRuleTimer, "Rule", ruleElapsed);
 
                         if (result != null && !result.isEmpty())
                         {
                             textOcrRaw.setText(result);
-                            textRuleResult.setText(ruleResult);
                             currentOcrResult = result;
+                            currentOcrResultWithBoxes = resultWithBoxes;
                             // Show bounding boxes on the image
                             imageView.setOcrResults(resultWithBoxes,
                                 currentBitmap.getWidth(), currentBitmap.getHeight());
-                            // Enable LLM button if LLM is ready
+                            // Enable structuring and LLM buttons
+                            buttonRunStructuring.setEnabled(true);
                             buttonRunLLM.setEnabled(llmHelper.isInitialized());
                         }
                         else
                         {
                             textOcrRaw.setText("No text recognized");
-                            textRuleResult.setText("No text to extract");
                             currentOcrResult = null;
+                            currentOcrResultWithBoxes = null;
                             imageView.clearResults();
+                            buttonRunStructuring.setEnabled(false);
                             buttonRunLLM.setEnabled(false);
                         }
 
                         buttonRunOCR.setEnabled(true);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void runStructuringWithTimer()
+    {
+        if (currentOcrResultWithBoxes == null || currentOcrResultWithBoxes.isEmpty()) {
+            Toast.makeText(this, "No OCR result to process", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        buttonRunStructuring.setEnabled(false);
+        textRuleResult.setText("Running structuring...");
+
+        final long startTime = System.currentTimeMillis();
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                // Run spatial rule-based extraction using bounding box coordinates
+                final String ruleResult = SpatialExtractor.extract(currentOcrResultWithBoxes);
+                final long endTime = System.currentTimeMillis();
+
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        long elapsed = endTime - startTime;
+                        updateTimerDisplay(textStructuringTimer, "Rule", elapsed);
+                        textRuleResult.setText(ruleResult);
+                        buttonRunStructuring.setEnabled(true);
                     }
                 });
             }
