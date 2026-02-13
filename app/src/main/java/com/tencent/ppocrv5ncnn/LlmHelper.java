@@ -28,8 +28,12 @@ public class LlmHelper {
     private boolean isInitialized = false;
 
     private static final String KARTU_KELUARGA_PROMPT =
-        "Extract Kartu Keluarga data from OCR. Row numbers link same person across tables.\n" +
-        "Output JSON: {\"no_kk\":\"\",\"kepala_keluarga\":\"\",\"alamat\":\"\",\"rt_rw\":\"\",\"desa_kelurahan\":\"\",\"kecamatan\":\"\",\"kabupaten_kota\":\"\",\"provinsi\":\"\",\"anggota_keluarga\":[{\"nama\":\"\",\"nik\":\"\",\"jenis_kelamin\":\"\",\"tempat_lahir\":\"\",\"tanggal_lahir\":\"\",\"agama\":\"\",\"pendidikan\":\"\",\"pekerjaan\":\"\",\"status_perkawinan\":\"\",\"hubungan_keluarga\":\"\",\"kewarganegaraan\":\"\",\"nama_ayah\":\"\",\"nama_ibu\":\"\"}]}\nOCR:\n";
+        "Indonesian Kartu Keluarga (Family Card) OCR. Text is arranged spatially with | separating columns.\n" +
+        "Row numbers (1,2,3...) link the same person across Table 1 and Table 2.\n" +
+        "Table 1 has: No, Nama Lengkap, NIK, Jenis Kelamin, Tempat Lahir, Tanggal Lahir, Agama, Pendidikan, Pekerjaan\n" +
+        "Table 2 has: No, Status Perkawinan, Status Hubungan, Kewarganegaraan, Nama Ayah, Nama Ibu\n" +
+        "Return ONLY valid JSON:\n" +
+        "{\"no_kk\":\"\",\"kepala_keluarga\":\"\",\"alamat\":\"\",\"rt_rw\":\"\",\"desa_kelurahan\":\"\",\"kecamatan\":\"\",\"kabupaten_kota\":\"\",\"provinsi\":\"\",\"anggota_keluarga\":[{\"nama\":\"\",\"nik\":\"\",\"jenis_kelamin\":\"\",\"tempat_lahir\":\"\",\"tanggal_lahir\":\"\",\"agama\":\"\",\"pendidikan\":\"\",\"pekerjaan\":\"\",\"status_perkawinan\":\"\",\"hubungan_keluarga\":\"\",\"kewarganegaraan\":\"\",\"nama_ayah\":\"\",\"nama_ibu\":\"\"}]}\n\nOCR Text:\n";
 
     public interface LlmCallback {
         void onResult(String result);

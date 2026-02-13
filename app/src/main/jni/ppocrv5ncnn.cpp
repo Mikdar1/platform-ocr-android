@@ -178,7 +178,7 @@ JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved)
 // public native boolean loadModel(AssetManager mgr, int modelid, int sizeid, int cpugpu);
 JNIEXPORT jboolean JNICALL Java_com_tencent_ppocrv5ncnn_PPOCRv5Ncnn_loadModel(JNIEnv* env, jobject thiz, jobject assetManager, jint modelid, jint sizeid, jint cpugpu)
 {
-    if (modelid < 0 || modelid > 1 || sizeid < 0 || sizeid > 4 || cpugpu < 0 || cpugpu > 2)
+    if (modelid < 0 || modelid > 1 || sizeid < 0 || sizeid > 6 || cpugpu < 0 || cpugpu > 2)
     {
         return JNI_FALSE;
     }
@@ -193,13 +193,15 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_ppocrv5ncnn_PPOCRv5Ncnn_loadModel(JN
         "server"
     };
 
-    const int sizetypes[5] =
+    const int sizetypes[7] =
     {
         320,
-        400,
         480,
-        560,
-        640
+        640,
+        960,
+        1280,
+        1600,
+        1920
     };
 
     std::string det_parampath = std::string("PP_OCRv5_") + modeltypes[(int)modelid] + "_det.ncnn.param";

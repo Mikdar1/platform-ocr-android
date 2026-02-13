@@ -357,7 +357,10 @@ public class MainActivity extends Activity
 
     private void loadOcrModel()
     {
-        boolean ret = ppocrv5ncnn.loadModel(getAssets(), currentModel, 2, currentCpuGpu);
+        // sizeid: 0=320, 1=480, 2=640, 3=960, 4=1280, 5=1600, 6=1920
+        // GPU can handle 960; CPU OOMs above 640
+        int sizeid = (currentCpuGpu >= 1) ? 3 : 2;
+        boolean ret = ppocrv5ncnn.loadModel(getAssets(), currentModel, sizeid, currentCpuGpu);
         if (!ret)
         {
             Log.e(TAG, "ppocrv5ncnn loadModel failed");
@@ -488,7 +491,11 @@ public class MainActivity extends Activity
         isLlmRunning = true;
         timerHandler.post(llmTimerRunnable);
 
-        llmHelper.structureKartuKeluargaAsync(currentOcrResult, new LlmHelper.LlmCallback() {
+        // Use spatial text (preserves tabular layout) instead of flat OCR text
+        String spatialText = SpatialExtractor.toSpatialText(currentOcrResultWithBoxes);
+        String llmInput = (spatialText != null && !spatialText.isEmpty()) ? spatialText : currentOcrResult;
+
+        llmHelper.structureKartuKeluargaAsync(llmInput, new LlmHelper.LlmCallback() {
             @Override
             public void onResult(final String result) {
                 final long endTime = System.currentTimeMillis();
